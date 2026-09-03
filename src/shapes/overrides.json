@@ -1,0 +1,171 @@
+{
+  "//": [
+    "HAND-CURATED PARSER RULES. Contains rules, not shapes -- the markdown in",
+    "docs/shape-libraries/ stays the source of truth for what shapes exist, and",
+    "scripts/buildShapeIndex.js reads this to know HOW to read each file.",
+    "",
+    "`find`/`into` exist because only 17 of the 30 Usage blocks contain a literal",
+    "{shape} placeholder; the other 13 show a worked example instead. Rather than",
+    "hard-coding 13 style templates here (which would go stale invisibly when the",
+    "markdown changed), we record the exact substring the example occupies and let",
+    "the generator punch the hole. If `find` ever stops appearing in its Usage",
+    "block the build FAILS -- staleness is loud by construction.",
+    "",
+    "`mode` selects the harvester: flat | sectioned | sectionedVendor | manual.",
+    "`coverage` is reported to the caller verbatim and gates the validator's",
+    "shape cross-check (only `complete` libraries are checked)."
+  ],
+
+  "defaults": {
+    "mode": "flat",
+    "coverage": "complete",
+    "shapeSectionPattern": "^Shapes"
+  },
+
+  "libraries": {
+    "alibaba_cloud": { "form": "shape", "title": "Alibaba Cloud" },
+    "android":       { "form": "shape", "title": "Android UI", "find": "mxgraph.android.phone2", "into": "mxgraph.android.{shape}" },
+    "arrows2":       { "form": "shape", "title": "Arrows", "find": "mxgraph.arrows2.arrow", "into": "mxgraph.arrows2.{shape}" },
+    "atlassian":     { "form": "image", "title": "Atlassian", "find": "img/lib/atlassian/Jira_Logo.svg", "into": "img/lib/atlassian/{shape}.svg" },
+    "aws4":          { "form": "resIcon", "title": "AWS 2019+" },
+    "basic":         { "form": "shape", "title": "Basic shapes" },
+
+    "azure2": {
+      "form": "image",
+      "title": "Azure (2021+ icon set)",
+      "find": "img/lib/azure2/compute/Virtual_Machine.svg",
+      "into": "img/lib/azure2/{shape}.svg",
+      "//": "Hybrid file: a `## Shapes (648)` header, then `### category (N)` bullet sections, then a `### Additional Categories` block of unbackticked comma lists. Flattening to the bullets alone loses 294 shapes, so both passes run. Tokens are category-qualified ('compute/Virtual_Machine') because the same slug appears in several categories.",
+      "mode": "sectioned",
+      "tokenJoin": "/",
+      "commaListSection": "Additional Categories",
+      "coverage": "partial",
+      "note": "513 of the 648 shapes draw.io ships are indexed here. An unlisted icon may still exist -- the path form is img/lib/azure2/{category}/{Name}.svg."
+    },
+
+    "bpmn": {
+      "form": "shape",
+      "title": "BPMN 2.0",
+      "find": "mxgraph.bpmn.shape",
+      "into": "mxgraph.bpmn.{shape}",
+      "//": "The `## Parameters` section's bullets (`outline`, `symbol`) are style KEYS, not shapes. Section-scoped harvesting excludes them without a special case; `params` re-surfaces them to the caller as what they are.",
+      "params": {
+        "outline": ["start", "end", "catching", "throwing", "none"],
+        "symbol": ["message", "timer", "error", "cancel", "compensation", "link", "terminate", "general", "multiple", "rule"]
+      }
+    },
+
+    "cabinets":  { "form": "shape", "title": "Cabinets" },
+    "cisco19":   { "form": "prIcon", "title": "Cisco (2019 icon set)" },
+    "citrix":    { "form": "shape", "title": "Citrix" },
+
+    "electrical": {
+      "form": "shape",
+      "title": "Electrical / electronic symbols",
+      "find": "mxgraph.electrical.resistors.resistor_1",
+      "into": "mxgraph.electrical.{shape}",
+      "//": "Addressing is category-qualified: mxgraph.electrical.{category}.{shape}. A flat list would emit mxgraph.electrical.resistor_1, which draw.io does not resolve.",
+      "mode": "sectioned",
+      "tokenJoin": ".",
+      "sectionRoot": "Categories",
+      "coverage": "partial",
+      "note": "A representative sample only -- draw.io ships roughly 50 categories. The addressing form is mxgraph.electrical.{category}.{shape}."
+    },
+
+    "floorplan":  { "form": "shape", "title": "Floorplan" },
+    "flowchart":  { "form": "shape", "title": "Flowchart" },
+    "fluidpower": { "form": "shape", "title": "Fluid power", "note": "Shapes are numbered (x10010, x10020, ...) rather than named." },
+    "gcp2":       { "form": "shape", "title": "Google Cloud Platform" },
+
+    "infographic": {
+      "form": "shape",
+      "title": "Infographic",
+      "find": "mxgraph.infographic.shadedCube;isoAngle=15;",
+      "into": "mxgraph.infographic.{shape};",
+      "//": "Bullets carry per-shape extra style params: `shadedCube` (needs `isoAngle=15;`). The generator folds those into that shape's emitted style, so the caller still copies one finished string.",
+      "perShapeExtras": true
+    },
+
+    "kubernetes":   { "form": "prIcon", "title": "Kubernetes" },
+    "lean_mapping": { "form": "shape", "title": "Lean / value-stream mapping" },
+
+    "material_design": {
+      "form": "url",
+      "title": "Google Material Icons",
+      "find": "{icon_name}",
+      "into": "{shape}",
+      "//": "Sections are h2 (`## action (115)`), not h3, and are purely organisational -- the CDN URL takes a bare icon name, so tokens are NOT category-qualified. Icons load from fonts.gstatic.com at render time.",
+      "mode": "sectioned",
+      "tokenJoin": "",
+      "sectionLevel": 2,
+      "coverage": "partial",
+      "note": "300 common icons of the ~2,100 Material set. Any Material icon name works in the same URL, whether or not it is listed here."
+    },
+
+    "mscae": {
+      "form": "shape",
+      "title": "Microsoft Azure / Cloud & Enterprise (legacy)",
+      "find": "mxgraph.mscae.cloud.azure",
+      "into": "mxgraph.mscae.{shape}",
+      "//": "Unindexable from this file: addressing needs mxgraph.mscae.{category}.{shape} and the source never attributes its three bullets to a category. They are therefore carried as manual entries and coverage says so.",
+      "mode": "manual",
+      "coverage": "unindexed",
+      "shapes": [
+        { "name": "cloud.azure", "note": "Azure cloud logo" }
+      ],
+      "note": "Not indexed. Shapes are mxgraph.mscae.{category}.{shape} with category one of cloud, intune, oms, system_center. Prefer the azure2 library for current Azure diagrams."
+    },
+
+    "network": {
+      "form": "shape",
+      "title": "Networking",
+      "find": "mxgraph.networks.server",
+      "into": "mxgraph.networks.{shape}",
+      "//": "Library name is `network` but the mxgraph prefix is `networks`. Never derive a prefix from a filename."
+    },
+
+    "openstack": { "form": "shape", "title": "OpenStack" },
+
+    "pid": {
+      "form": "shape",
+      "title": "P&ID (piping and instrumentation)",
+      "find": "mxgraph.pid2valves.valve;valveType=gate;",
+      "into": "mxgraph.{shape};",
+      "//": "The only parametric library: one valve shape specialised by `valveType=`, so the file has no shape bullets at all. Entries are written out here by hand.",
+      "mode": "manual",
+      "coverage": "parametric",
+      "shapes": [
+        { "name": "pid2valves.valve", "extras": "valveType=gate;", "note": "valveType= is required; the emitted style defaults it to gate. Swap in any value from params.valveType." },
+        { "name": "pid2inst.discInst", "note": "Discrete instrument" },
+        { "name": "pid2inst.sharedCont", "note": "Shared control / display" },
+        { "name": "pid2inst.compFunc", "note": "Computer function" }
+      ],
+      "params": {
+        "valveType": ["gate", "globe", "needle", "ball", "butterfly", "diaphragm", "plug", "check"]
+      },
+      "note": "Parametric rather than enumerated: one valve shape specialised by valveType=, plus three instrument shapes. Swap the valveType value rather than looking for a differently-named valve shape."
+    },
+
+    "rack": {
+      "form": "shape",
+      "title": "Server racks",
+      "find": "mxgraph.rack.f5.arx_500",
+      "into": "mxgraph.rack.{shape}",
+      "//": "Three levels of qualification: `### Vendor` (lowercased, spaces to underscores), an optional `**subcategory:**` bold pseudo-heading beneath it, then the model. `### General (rackGeneral)` is not a vendor at all -- it switches the mxgraph LIBRARY to mxgraph.rackGeneral, so those shapes carry their own style template.",
+      "mode": "sectionedVendor",
+      "tokenJoin": ".",
+      "sectionRoot": "Vendors",
+      "sectionTemplateOverride": {
+        "General (rackGeneral)": "shape=mxgraph.rackGeneral.{shape};strokeColor=#666666;"
+      },
+      "coverage": "partial",
+      "note": "A representative sample of draw.io's rack library. Addressing is mxgraph.rack.{vendor}.{model}, or mxgraph.rack.{vendor}.{category}.{model} where a vendor has subcategories."
+    },
+
+    "salesforce": { "form": "shape", "title": "Salesforce", "find": "mxgraph.salesforce.analytics", "into": "mxgraph.salesforce.{shape}" },
+    "sap":        { "form": "image", "title": "SAP", "find": "img/lib/sap/SAP_Logo.svg", "into": "img/lib/sap/{shape}.svg", "note": "Some shape names are bare numbers (1-13). They are names, not indices." },
+    "sitemap":    { "form": "shape", "title": "Sitemap" },
+    "vvd":        { "form": "shape", "title": "VMware Validated Design" },
+    "webicons":   { "form": "shape", "title": "Web / brand icons" }
+  }
+}

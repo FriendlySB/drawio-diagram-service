@@ -1,284 +1,208 @@
-# Next AI Draw.io
+# draw.io Diagram Service
 
-<div align="center">
+An HTTP bridge between ServeAI's AI Agents and the draw.io rendering service.
 
-**AI-Powered Diagram Creation Tool - Chat, Draw, Visualize**
+An AI Agent can already write draw.io XML unaided. What it cannot do from inside a Flowise tool call
+is look up which of ~4,000 shapes exists and how to address it, know whether the XML it just wrote
+will actually open, keep a working copy across turns of a conversation, or reach a headless Chrome.
+This service does those four things, and nothing else.
 
-English | [中文](./docs/cn/README_CN.md) | [日本語](./docs/ja/README_JA.md)
+```
+ServeAI (Flowise agent)
+        │  HTTPS + Basic auth
+        ▼
+drawio-diagram-service ──── shape index (4,065 shapes, 30 libraries)
+        │                   validator (vendored from next-ai-draw-io)
+        │                   per-conversation working copies, 24h TTL
+        │  form-urlencoded, private network only
+        ▼
+draw-image-export2 (headless Chrome)
+```
 
-[![TrendShift](https://trendshift.io/api/badge/repositories/15449)](https://next-ai-drawio.jiang.jp/)
+## Quick start
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Next.js](https://img.shields.io/badge/Next.js-16.x-black)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-19.x-61dafb)](https://react.dev/)
-[![Sponsor](https://img.shields.io/badge/Sponsor-❤-ea4aaa)](https://github.com/sponsors/DayuanJiang)
+```bash
+npm install
+npm run build:vendor      # compile the vendored TypeScript modules to dist/vendor/
+cp .env.example .env      # then set DRAWIO_CLIENT_ID and DRAWIO_CLIENT_SECRET
+npm start
+```
 
-[![Live Demo](./public/live-demo-button.svg)](https://next-ai-drawio.jiang.jp/)
+The server **refuses to start** while the credentials are still the placeholder values, so a copied
+template cannot go live unprotected.
 
-</div>
+`src/http/diagram.http` is a numbered, runnable request sequence covering the whole workflow.
+Interactive docs are at `/api/docs`.
 
-A Next.js web application that integrates AI capabilities with draw.io diagrams. Create, modify, and enhance diagrams through natural language commands and AI-assisted visualization.
+## Endpoints
 
-> Note: Thanks to <img src="https://raw.githubusercontent.com/DayuanJiang/next-ai-draw-io/main/public/doubao-color.png" alt="" height="20" /> [ByteDance Doubao](https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=Z9Z3LDTJ&utm_campaign=drawio&utm_content=drawio&utm_medium=devrel&utm_source=OWO&utm_term=drawio) sponsorship, the demo site now uses the powerful glm-4.7 model!
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Liveness. **Unauthenticated.** Reports renderer reachability. |
+| `GET` | `/api/shapes` | Library catalogue; `?q=` searches across every library. |
+| `GET` | `/api/shapes/{library}` | Search one library. `?q=term1,term2` |
+| `POST` | `/api/diagram/create` | Start a diagram. Returns a `fileId`. |
+| `GET` | `/api/diagram` | List this session's diagrams (metadata only). |
+| `POST` | `/api/diagram/validate` | Validate XML; store it **only if it passes**. |
+| `POST` | `/api/diagram/render` | Render the stored copy to PNG, JPG or PDF. |
 
-<p align="center">
-  <a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=next-ai-draw-io">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="./public/atlas-cloud-logo-white.svg">
-      <img src="./public/atlas-cloud-logo.svg" alt="Atlas Cloud" width="200">
-    </picture>
-  </a>
-</p>
+**There is no delete endpoint.** The AI Agent is not intended to remove diagrams, so the capability
+is not exposed. Storage is reclaimed by the TTL sweeper alone — which makes that sweeper the only
+thing standing between an abandoned session and the disk, and is why `MAX_DIAGRAMS_PER_CHAT` exists.
 
-> 🎁 Thanks to **[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=next-ai-draw-io)** for sponsoring next-ai-draw-io. Its OpenAI-compatible API gives diagram workflows one provider connection for DeepSeek, Qwen, GLM, Kimi, MiniMax, and more. Budget-friendly access is available through the [Coding Plan](https://www.atlascloud.ai/console/coding-plan).
+## The three ideas worth knowing
 
+**1. Shape styles arrive finished.** draw.io addresses shapes five different ways depending on the
+library — a direct `shape=`, aws4's `resIcon=`, cisco19's bare `prIcon=`, an image path, a CDN URL —
+and some libraries need category qualification that a flat name list gets silently wrong. Every one
+of those decisions is made at build time. `matches[].style` is a complete style string; copy it
+verbatim. The agent never assembles one, so there is no addressing decision left to get wrong.
 
-https://github.com/user-attachments/assets/9d60a3e8-4a1c-4b5e-acbb-26af2d3eabd1
+```jsonc
+// GET /api/shapes/aws4?q=lambda
+"matches": [{
+  "name": "lambda",
+  "style": "shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;..."
+}]
+```
 
+**2. Validate first, write second.** The stored copy is what the user last approved. An attempt to
+improve it must not be able to destroy it, so the validator runs against the submitted XML in memory
+and the disk is touched only after it returns ok. A rejected document leaves the stored bytes
+byte-identical and the agent gets back what was wrong with its attempt. Writes are atomic (temp file
+plus rename), so a crash mid-write cannot truncate a good diagram either.
 
+Minor faults are repaired rather than rejected — an unescaped `&`, a bare `<mxGraphModel>` promoted
+to a full `<mxfile>` — and every repair is reported in `fixes` so a recurring mistake gets noticed
+instead of being invisibly patched forever.
 
-## Table of Contents
-- [Next AI Draw.io](#next-ai-drawio)
-  - [Table of Contents](#table-of-contents)
-  - [Examples](#examples)
-  - [Features](#features)
-  - [MCP Server](#mcp-server)
-    - [Claude Code CLI](#claude-code-cli)
-  - [Getting Started](#getting-started)
-    - [Try it Online](#try-it-online)
-    - [Desktop Application](#desktop-application)
-    - [Run with Docker](#run-with-docker)
-    - [Installation](#installation)
-  - [Deployment](#deployment)
-    - [Deploy to EdgeOne Pages](#deploy-to-edgeone-pages)
-    - [Deploy on Vercel](#deploy-on-vercel)
-    - [Deploy on Cloudflare Workers](#deploy-on-cloudflare-workers)
-  - [Multi-Provider Support](#multi-provider-support)
-    - [Server-Side Multi-Model Configuration](#server-side-multi-model-configuration)
-    - [Admin Panel](#admin-panel)
-  - [How It Works](#how-it-works)
-  - [Support \& Contact](#support--contact)
-  - [FAQ](#faq)
-  - [Star History](#star-history)
+**3. The delivered PNG is the editable artefact.** ServeAI cannot carry a `.drawio` file, so
+`embedXml` writes the source XML into the PNG's `zTXt` chunk. The image a user receives reopens in
+draw.io as a fully editable diagram rather than a flat picture. *(PNG only: the renderer's PDF
+equivalent does not take effect in the current build — measured, not assumed.)*
 
-## Examples
+> **This requires a patched renderer.** Upstream `draw-image-export2` has two bugs in
+> `writePngWithText`: it computes the `zTXt` CRC over only the compressed payload — omitting the
+> key, its null terminator and the compression-method byte — and it under-allocates the output
+> buffer by 8 bytes, truncating the `IEND` chunk. The resulting PNG is malformed. draw.io's own
+> reader is lenient enough to open it, which is why the bug is easy to miss, but strict decoders
+> reject it outright. Both are fixed in `drawio-diagram-renderer-service`; against an unpatched
+> renderer, `embedXml=1` silently corrupts every image this service delivers.
 
-Here are some example prompts and their generated diagrams:
+## Configuration
 
-<div align="center">
-<table width="100%">
-  <tr>
-    <td colspan="2" valign="top" align="center">
-      <strong>Animated transformer connectors</strong><br />
-      <p><strong>Prompt:</strong> Give me a **animated connector** diagram of transformer's architecture.</p>
-      <img src="./public/animated_connectors.svg" alt="Transformer Architecture with Animated Connectors" width="480" />
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>RAG Technique Diagram</strong><br />
-      <p><strong>Prompt:</strong> Generate a RAG architecture diagram for **chat application**. Use connected diagram for data ingestion</p>
-      <img src="./public/rag_prod.svg" alt="RAG Architecture Diagram" width="480" />
-    </td>
-    <td width="50%" valign="top">
-      <strong>Authentication using React and AWS</strong><br />
-      <p><strong>Prompt:</strong> Generate authentication process using React with **AWS**. Use Serverless architecture.</p>
-      <img src="./public/auth.svg" alt="Authentication Architecture Diagram" width="480" />
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>Open Innovation</strong><br />
-      <p><strong>Prompt:</strong> Create visualization of Henry Chesbrough's Open Innovation model.</p>
-      <img src="./public/inno.svg" alt="Open Innovation Diagram" width="480" />
-    </td>
-    <td width="50%" valign="top">
-      <strong>Cat sketch</strong><br />
-      <p><strong>Prompt:</strong> Draw a cute cat for me.</p>
-      <img src="./public/cat_demo.svg" alt="Cat Drawing" width="240" />
-    </td>
-  </tr>
-</table>
-</div>
+| Variable | Default | Notes |
+|---|---|---|
+| `PORT` | `5100` | |
+| `DRAWIO_CLIENT_ID` | — | Required. Server refuses to boot on the placeholder. |
+| `DRAWIO_CLIENT_SECRET` | — | Required. Compared in constant time. |
+| `STORAGE_ROOT` | `/tmp/serveAI-drawio` | `{root}/{chatId}/{fileId}.xml` + `.json` sidecar |
+| `TEMP_TTL_HOURS` | `24` | Idle time before a conversation's diagrams are swept. |
+| `MAX_DIAGRAMS_PER_CHAT` | `20` | The only ceiling, since nothing can delete. |
+| `MAX_BODY_SIZE` | `10mb` | Oversized bodies get a 413 with a proper envelope. |
+| `RENDER_SERVICE_URL` | `http://localhost:8000` | **Must not be network-exposed.** |
+| `RENDER_TIMEOUT_MS` | `35000` | Deliberately above the renderer's own 30 s Chrome kill. |
+| `RENDER_BACKGROUND` | `#ffffff` | Not transparent — see below. |
+| `RENDER_SCALE` | `2` | |
+| `RENDER_BORDER` | `10` | |
+| `SHAPE_CHECK_ENABLED` | `1` | Cross-check style references. Warnings only, never rejects. |
 
-## Features
+Two defaults are deliberate rather than arbitrary. `RENDER_TIMEOUT_MS` exceeds the renderer's
+internal kill because aborting earlier only abandons renders that were about to succeed while Chrome
+burns the CPU anyway. `RENDER_BACKGROUND` is white because the renderer omits the background for a
+PNG when it is unset, and a transparent PNG with dark text is invisible in a dark-mode chat.
 
--   **LLM-Powered Diagram Creation**: Leverage Large Language Models to create and manipulate draw.io diagrams directly through natural language commands
--   **Image-Based Diagram Replication**: Upload existing diagrams or images and have the AI replicate and enhance them automatically
--   **PDF & Text File Upload**: Upload PDF documents and text files to extract content and generate diagrams from existing documents
--   **AI Reasoning Display**: View the AI's thinking process for supported models (OpenAI o1/o3, Gemini, Claude, etc.)
--   **Diagram History**: Comprehensive version control that tracks all changes, allowing you to view and restore previous versions of your diagrams before the AI editing.
--   **Interactive Chat Interface**: Communicate with AI to refine your diagrams in real-time
--   **Cloud Architecture Diagram Support**: Specialized support for generating cloud architecture diagrams (AWS, GCP, Azure)
--   **Animated Connectors**: Create dynamic and animated connectors between diagram elements for better visualization
+## Error contract
 
-## MCP Server
-
-Use Next AI Draw.io with AI agents like Claude Desktop, Cursor, and VS Code via MCP (Model Context Protocol).
+One envelope for everything, whether the failure came from this server, the validator or the
+renderer:
 
 ```json
-{
-  "mcpServers": {
-    "drawio": {
-      "command": "npx",
-      "args": ["@next-ai-drawio/mcp-server@latest"]
-    }
-  }
-}
+{ "success": false, "error": { "error": "...", "code": "...", "suggestion": "..." } }
 ```
 
-### Claude Code CLI
+`code` and `suggestion` are the point — they are what lets the AI Agent correct itself and retry
+without a human. The status code carries one further distinction:
 
-```bash
-claude mcp add drawio -- npx @next-ai-drawio/mcp-server@latest
+- **4xx** — a refusal *we* make. The request was wrong and the agent can fix it.
+- **200 with `success: false`** — an *external* failure (`render_timeout`,
+  `render_service_unreachable`, `render_failed`). A dead dependency is something to read and react
+  to, not a transport error. This matches the sibling OfficeCLI Server's `cli_timeout` discipline.
+
+## Security
+
+- One shared credential, Basic auth, compared with `crypto.timingSafeEqual`. A missing header and a
+  wrong secret produce byte-identical responses, so an attacker cannot learn when they have guessed
+  a valid client id.
+- `chatId` and `fileId` become filesystem path segments and are restricted to
+  `^[A-Za-z0-9_-]{1,64}$` — enforced by the OpenAPI schema *and* independently in the storage layer,
+  since a direct call bypasses the former.
+- **The renderer has no authentication of its own**, allows CORS `*`, and launches a fresh Chrome per
+  request. It must be reachable only from this service — private network or loopback.
+- The renderer also fetches `viewer.diagrams.net/export3.html` per request, so it needs outbound
+  internet unless you self-host draw.io and point `DRAWIO_BASE_URL` at it.
+
+## Project structure
+
+```
+src/
+  index.js                     express -> swagger -> OpenApiValidator -> routes -> error handler
+  container.js                 the only place process.env is read
+  domPolyfill.js               installs globalThis.DOMParser + XMLSerializer  (see below)
+  middleware/auth.js           Basic auth
+  routes/diagramRoutes.js
+  controllers/diagramController.js
+  services/
+    shapeLibraryService.js     serves shapeIndex.json; search + reference cross-check
+    diagramService.js          the ONLY consumer of the vendored modules
+    storageService.js          working copies, sidecars, TTL sweeper
+    renderService.js           the renderer client
+  shapes/
+    shapeIndex.json            GENERATED, checked in — `npm run build:shapes`
+    overrides.json             hand-curated parser RULES (not shapes)
+  swagger/openapi.yaml         served at /api/docs AND enforced on every request
+  http/diagram.http            numbered runnable requests
+  *.ts                         VENDORED from next-ai-draw-io — do not edit
+scripts/buildShapeIndex.js     parses docs/shape-libraries/*.md -> shapeIndex.json
+docs/shape-libraries/          source of truth for what shapes exist
+tests/                         181 tests; `npm test`
 ```
 
-Then ask Claude to create diagrams:
-> "Create a flowchart showing user authentication with login, MFA, and session management"
-
-The diagram appears in your browser in real-time!
-
-See the [MCP Server README](./packages/mcp-server/README.md) for VS Code, Cursor, and other client configurations.
-
-## Getting Started
-
-### Try it Online
-
-No installation needed! Try the app directly on our demo site:
-
-[![Live Demo](./public/live-demo-button.svg)](https://next-ai-drawio.jiang.jp/)
-
-
-
-> **Bring Your Own API Key**: You can use your own API key to bypass usage limits on the demo site. Click the Settings icon in the chat panel to configure your provider and API key. Your key is stored locally in your browser and is never stored on the server.
-
-### Desktop Application
-
-Download the native desktop app for your platform from the [Releases page](https://github.com/DayuanJiang/next-ai-draw-io/releases):
-
-Supported platforms: Windows, macOS, Linux.
-
-### Run with Docker
-
-[Go to Docker Guide](./docs/en/docker.md)
-
-### Installation
-
-1. Clone the repository:
-
-```bash
-git clone https://github.com/DayuanJiang/next-ai-draw-io
-cd next-ai-draw-io
-npm install
-cp env.example .env.local
-```
-
-See the [Provider Configuration Guide](./docs/en/ai-providers.md) for detailed setup instructions for each provider.
-
-2. Run the development server:
-
-```bash
-npm run dev
-```
-
-3. Open [http://localhost:6002](http://localhost:6002) in your browser to see the application.
-
-## Deployment
-
-### Deploy to EdgeOne Pages
-
-You can deploy with one click using [Tencent EdgeOne Pages](https://pages.edgeone.ai/).
-
-Deploy by this button: 
-
-[![Deploy to EdgeOne Pages](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://edgeone.ai/pages/new?repository-url=https%3A%2F%2Fgithub.com%2FDayuanJiang%2Fnext-ai-draw-io)
-
-Check out the [Tencent EdgeOne Pages documentation](https://pages.edgeone.ai/document/deployment-overview) for more details.
-
-Additionally, deploying through Tencent EdgeOne Pages will also grant you a [daily free quota for DeepSeek models](https://pages.edgeone.ai/document/edge-ai).
-
-### Deploy on Vercel 
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FDayuanJiang%2Fnext-ai-draw-io)
-
-The easiest way to deploy is using [Vercel](https://vercel.com/new), the creators of Next.js. Be sure to **set the environment variables** in the Vercel dashboard as you did in your local `.env.local` file.
-
-See the [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
-### Deploy on Cloudflare Workers
-
-[Go to Cloudflare Deploy Guide](./docs/en/cloudflare-deploy.md)
-
-
-
-## Multi-Provider Support
-
--   [ByteDance Doubao](https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=Z9Z3LDTJ&utm_campaign=drawio&utm_content=drawio&utm_medium=devrel&utm_source=OWO&utm_term=drawio)
--   AWS Bedrock (default)
--   OpenAI
--   Anthropic
--   Google AI
--   Google Vertex AI
--   Azure OpenAI
--   Ollama
--   OpenRouter
--   AIHubMix
--   DeepSeek
--   SiliconFlow
--   ModelScope
--   SGLang
--   Vercel AI Gateway
--   [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=next-ai-draw-io)
-
-
-All providers except AWS Bedrock and OpenRouter support custom endpoints.
-
-📖 **[Detailed Provider Configuration Guide](./docs/en/ai-providers.md)** - See setup instructions for each provider.
-
-### Server-Side Multi-Model Configuration
-
-Administrators can configure multiple server-side models that are available to all users without requiring personal API keys. Configure via `AI_MODELS_CONFIG` environment variable (JSON string) or `ai-models.json` file. For a single-provider quick setup, list comma-separated model IDs in `AI_MODEL`.
-
-### Admin Panel
-
-Set the `ADMIN_PASSWORD` environment variable and visit `/admin` to manage server settings (models, access codes, features, observability, quota) from a web panel instead of hand-editing `.env`.
-
-📖 **[Admin Panel Guide](./docs/en/admin-panel.md)** — setup, precedence rules, and notes.
-
-**Model Requirements**: This task requires strong model capabilities for generating long-form text with strict formatting constraints (draw.io XML). Recommended models include Claude Sonnet 4.5, GPT-5.1, Gemini 3 Pro, and DeepSeek V3.2/R1.
-
-Note that the `claude` series has been trained on draw.io diagrams with cloud architecture logos like AWS, Azure, GCP. So if you want to create cloud architecture diagrams, this is the best choice.
-
-
-## How It Works
-
-The application uses the following technologies:
-
--   **Next.js**: For the frontend framework and routing
--   **Vercel AI SDK** (`ai` + `@ai-sdk/*`): For streaming AI responses and multi-provider support
--   **react-drawio**: For diagram representation and manipulation
-
-Diagrams are represented as XML that can be rendered in draw.io. The AI processes your commands and generates or modifies this XML accordingly.
-
-
-## Support & Contact
-
-**Special thanks to [ByteDance Doubao](https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=Z9Z3LDTJ&utm_campaign=drawio&utm_content=drawio&utm_medium=devrel&utm_source=OWO&utm_term=drawio) for sponsoring the API token usage of the demo site!** Register on the ARK platform to get 500K free tokens for all models!
-
-**Special thanks to [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=next-ai-draw-io) for sponsoring next-ai-draw-io and supporting its multi-provider ecosystem!** Try its OpenAI-compatible LLM API through the [Atlas Cloud Coding Plan](https://www.atlascloud.ai/console/coding-plan).
-
-If you find this project useful, please consider [sponsoring](https://github.com/sponsors/DayuanJiang) to help me host the live demo site!
-
-For support or inquiries, please open an issue on the GitHub repository or contact the maintainer at:
-
--   Email: me[at]jiang.jp
-
-## FAQ
-
-See [FAQ](./docs/en/FAQ.md) for common issues and solutions.
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=DayuanJiang/next-ai-draw-io&type=date&legend=top-left)](https://www.star-history.com/#DayuanJiang/next-ai-draw-io&type=date&legend=top-left)
-
----
+### Two things that will bite you
+
+**`domPolyfill.js` must load before anything vendored.** The vendored modules read `DOMParser` and
+`XMLSerializer` off the global object and **degrade silently** without them: the validator skips a
+repair pattern, falls back to regex checking, and still answers `valid: true`. Since this service
+writes to disk only when the validator says ok, a quietly-degraded validator is the worst failure
+mode available. `container.js` requires the polyfill on its first line for exactly this reason.
+
+**The shape index is generated, not parsed at boot.** `scripts/buildShapeIndex.js` is the riskiest
+code here, and its failure mode is silent — a regression emits style strings draw.io ignores,
+producing blank rectangles in a user's diagram. A checked-in artefact is reviewed once in a diff and
+pinned by tests, rather than re-derived on every production boot where nobody is looking. After
+editing anything in `docs/shape-libraries/`, run `npm run build:shapes`; a test compares a hash of
+the markdown against the index and fails if you forget.
+
+## Coverage, stated honestly
+
+24 of the 30 libraries are indexed completely. Five are not, and each says so in its `coverage`
+field and carries a `note` explaining the gap:
+
+| Library | Coverage | Why |
+|---|---|---|
+| `azure2` | partial | 513 of 648 shapes documented upstream. |
+| `electrical` | partial | A sample of ~50 categories. |
+| `material_design` | partial | 300 common icons; any Material name works in the same URL. |
+| `rack` | partial | A representative sample of vendors. |
+| `pid` | parametric | One valve shape specialised by `valveType=`, not a list. |
+| `mscae` | unindexed | Needs a category segment the source never attributes. Prefer `azure2`. |
+
+The validator's shape cross-check **skips every library that is not `complete`**. In a partial
+library an unrecognised name is at least as likely to be a gap in our data as a mistake in the
+agent's, and warning about correct output would train the agent to distrust the check entirely.
+
+## Licence
+
+Apache-2.0. `src/*.ts` are vendored from
+[DayuanJiang/next-ai-draw-io](https://github.com/DayuanJiang/next-ai-draw-io) (Apache-2.0); see
+`LICENSE`.

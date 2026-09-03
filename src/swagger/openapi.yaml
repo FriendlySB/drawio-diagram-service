@@ -1,0 +1,269 @@
+openapi: 3.0.3
+
+# This file is BOTH the documentation served at /api/docs AND the request validator mounted in
+# index.js. Anything not described here is rejected before it reaches a controller, which is why
+# every schema sets additionalProperties: false -- a typo'd field name should be an error the agent
+# can read, not a silently ignored parameter that makes a request behave unexpectedly.
+
+info:
+  title: draw.io Diagram Service
+  version: 1.0.0
+  description: |
+    An HTTP bridge between ServeAI's AI Agents and the draw.io rendering service.
+
+    **Workflow**
+
+    1. `GET /api/shapes` — see which shape libraries exist.
+    2. `GET /api/shapes/{library}?q=term` — get ready-to-paste style strings. Copy
+       `matches[].style` verbatim; never assemble a style string yourself.
+    3. `POST /api/diagram/create` — start a diagram, keep the `fileId`.
+    4. `POST /api/diagram/validate` — send the full XML. It is stored **only if it validates**;
+       a rejected document leaves the previously stored copy untouched.
+    5. `POST /api/diagram/render` — render the stored copy to a PNG, JPG or PDF.
+
+    A rendered PNG carries the diagram source inside its metadata, so the image a user receives
+    reopens in draw.io as a fully editable diagram.
+
+    **Retention.** Working copies are swept once a conversation has been idle for 24 hours. There is
+    no delete endpoint; storage is reclaimed by that sweep alone.
+
+servers:
+  - url: /api
+
+security:
+  - basicAuth: []
+
+tags:
+  - name: Health
+  - name: Shapes
+  - name: Diagram
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe (unauthenticated)
+      security: []
+      responses:
+        "200": { description: "Service is up; body reports renderer reachability" }
+
+  /shapes:
+    get:
+      tags: [Shapes]
+      summary: List shape libraries, or search across all of them
+      parameters:
+        - name: q
+          in: query
+          description: Search terms, comma-separated. Omit to get the catalogue.
+          # Declared as a comma-delimited ARRAY, not a string. A bare comma is a reserved character
+          # in a query value, and express-openapi-validator rejects one in a `type: string` param
+          # ("must be url encoded") -- which would break every documented ?q=a,b call. style: form
+          # with explode: false is OpenAPI's own way to say "comma-separated", and the validator
+          # then parses it for us.
+          style: form
+          explode: false
+          schema:
+            type: array
+            maxItems: 10
+            items: { type: string, maxLength: 60 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200": { description: "Catalogue, or cross-library matches" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /shapes/{library}:
+    get:
+      tags: [Shapes]
+      summary: Search one library for ready-to-paste style strings
+      parameters:
+        - name: library
+          in: path
+          required: true
+          description: Library id from the catalogue, e.g. aws4, azure2, flowchart.
+          schema: { type: string, pattern: "^[a-z0-9_]{1,40}$" }
+        - name: q
+          in: query
+          description: |
+            Search terms, comma-separated. Omitting it returns the library header and one worked
+            example rather than every shape — aws4 alone has over a thousand.
+          # See the note on /shapes: a comma-delimited array, not a string.
+          style: form
+          explode: false
+          schema:
+            type: array
+            maxItems: 10
+            items: { type: string, maxLength: 60 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200": { description: "Library header, a worked example, and matching shapes with finished styles" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /diagram:
+    get:
+      tags: [Diagram]
+      summary: List this session's diagrams (metadata only)
+      parameters:
+        - name: chatId
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Id" }
+        - name: fileId
+          in: query
+          description: Narrow the listing to one diagram.
+          schema: { $ref: "#/components/schemas/Id" }
+      responses:
+        "200": { description: "Diagram metadata — id, name, revision, page summary, size" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /diagram/create:
+    post:
+      tags: [Diagram]
+      summary: Start a new, empty diagram
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [chatId]
+              properties:
+                chatId: { $ref: "#/components/schemas/Id" }
+                name:
+                  type: string
+                  maxLength: 200
+                  description: Human-readable label, shown in listings.
+      responses:
+        "200": { description: "Created; returns the fileId to use for validate and render" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/Error" }
+
+  /diagram/validate:
+    post:
+      tags: [Diagram]
+      summary: Validate XML and store it only if it is sound
+      description: |
+        The validator runs against the submitted XML in memory. The stored copy is replaced **only**
+        when it returns ok, so a failed attempt to improve a diagram cannot destroy the version the
+        user was happy with.
+
+        Minor faults are repaired silently and listed in `fixes` — unescaped `&`, a missing root
+        cell, a bare `<mxGraphModel>` promoted to a full `<mxfile>`. Unrecognised shape references
+        come back in `warnings` and never block storage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [chatId, fileId, xml]
+              properties:
+                chatId: { $ref: "#/components/schemas/Id" }
+                fileId: { $ref: "#/components/schemas/Id" }
+                xml:
+                  type: string
+                  minLength: 1
+                  description: The complete document — an `<mxfile>`, or a bare `<mxGraphModel>` which will be wrapped.
+      responses:
+        "200": { description: "Valid and stored; returns revision, page summary, fixes and warnings" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/Error" }
+
+  /diagram/render:
+    post:
+      tags: [Diagram]
+      summary: Render the stored diagram to an image
+      description: |
+        Renders the **stored** copy, so only validated XML ever reaches the renderer.
+
+        Returns base64 in `contentBase64`. A PNG carries the diagram source in its metadata, so the
+        delivered image reopens in draw.io as an editable diagram — this is how an editable artefact
+        reaches a user, since ServeAI cannot carry a `.drawio` file.
+
+        A renderer failure is reported as HTTP 200 with `success: false`, matching how every other
+        external-tool failure is reported.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [chatId, fileId]
+              properties:
+                chatId: { $ref: "#/components/schemas/Id" }
+                fileId: { $ref: "#/components/schemas/Id" }
+                format:
+                  type: string
+                  # svg is listed so this service can answer with a useful message naming the
+                  # supported formats. The renderer's own reply to an unknown format is a bare
+                  # 400 "Unsupported Format!", which tells an agent nothing it can act on.
+                  enum: [png, jpg, jpeg, pdf, svg]
+                  default: png
+                scale:
+                  type: number
+                  minimum: 0.5
+                  maximum: 5
+                  description: Higher is more legible and larger. Defaults to 2.
+                pageId:
+                  type: string
+                  maxLength: 200
+                  description: Render one page of a multi-page diagram.
+                allPages:
+                  type: boolean
+                  description: PDF only — every page in a single file.
+                background:
+                  type: string
+                  maxLength: 32
+                  description: CSS colour, or "none" for transparent. Defaults to white.
+      responses:
+        "200": { description: "Rendered image as base64, with pixel dimensions" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+
+  schemas:
+    # chatId and fileId both become filesystem path segments. The pattern is the traversal defence
+    # and is enforced again in storageService -- the validator can be bypassed by a direct call in a
+    # test, the storage layer cannot.
+    Id:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{1,64}$"
+
+    Error:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error:
+          type: object
+          properties:
+            error: { type: string, description: What went wrong. }
+            code: { type: string, description: Stable machine-readable code. }
+            suggestion: { type: string, description: What to do about it. }
+
+  responses:
+    Error:
+      description: Refused
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or incorrect credentials
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

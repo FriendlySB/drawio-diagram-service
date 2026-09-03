@@ -78,5 +78,15 @@ ai-models.json
 *.bak
 .gstack/
 
-# admin panel settings (contains secrets)
-data/
+# NOTE: upstream ignored a top-level `data/` here. Removed deliberately -- an unanchored
+# `data/` matches at ANY depth, which would silently ignore e.g. src/shapes/data/.
+
+# --- drawio-diagram-service ---
+# Compiled vendored modules (src/*.ts -> dist/vendor). Rebuilt by `npm run build:vendor`.
+/dist
+
+# Per-conversation working copies. STORAGE_ROOT may point here in development.
+/storage/
+
+# The env template MUST be committed; the '.env*' rule above would otherwise swallow it.
+!.env.example

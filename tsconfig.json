@@ -1,41 +1,33 @@
+// Compiles ONLY the five vendored next-ai-draw-io modules (src/*.ts) to CommonJS
+// in dist/vendor/. The service itself is plain CommonJS JavaScript and is never
+// compiled -- `include` below is deliberately non-recursive so our own .js files
+// and the generated shape index are not dragged in.
 {
     "compilerOptions": {
-        "target": "ES2017",
-        "lib": ["dom", "dom.iterable", "esnext"],
-        "allowJs": true,
-        "skipLibCheck": true,
+        // DO NOT add a `lib` field. Its absence is load-bearing: target ES2022 with
+        // no lib resolves to lib.es2022.full.d.ts, which includes the DOM types. The
+        // vendored files reference DOMParser, XMLSerializer, Document and Element,
+        // so setting "lib": ["ES2022"] breaks all five.
+        "target": "ES2022",
+        // With module Node16, tsc picks the emit format per file from the nearest
+        // package.json `type`. Ours says "commonjs", so these ESM-syntax sources emit
+        // CommonJS with zero edits -- their "./pages.js" specifiers become require().
+        "module": "Node16",
+        "moduleResolution": "Node16",
+        "outDir": "./dist/vendor",
+        "rootDir": "./src",
         "strict": true,
-        "noEmit": true,
         "esModuleInterop": true,
-        "module": "esnext",
-        "moduleResolution": "bundler",
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "declaration": true,
+        "declarationMap": true,
+        "sourceMap": true,
         "resolveJsonModule": true,
-        "isolatedModules": true,
-        "jsx": "react-jsx",
-        "incremental": true,
-        "plugins": [
-            {
-                "name": "next"
-            }
-        ],
-        "paths": {
-            "@/*": ["./*"]
-        }
+        "types": ["node"]
     },
-    "files": ["electron/electron.d.ts"],
-    "include": [
-        "next-env.d.ts",
-        "**/*.ts",
-        "**/*.tsx",
-        ".next/types/**/*.ts",
-        ".next/dev/types/**/*.ts"
-    ],
-    "exclude": [
-        "node_modules",
-        "packages",
-        "electron",
-        "electron-standalone",
-        "dist-electron",
-        "release"
-    ]
+    // Non-recursive on purpose: only the five vendored modules, plus the local
+    // linkedom ambient declaration (a .d.ts emits no .js, so dist/vendor stays clean).
+    "include": ["src/*.ts", "types/*.d.ts"],
+    "exclude": ["node_modules", "dist"]
 }
